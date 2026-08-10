@@ -63,11 +63,49 @@ def is_burstable_azure(arm_sku_name: str) -> bool:
     return arm_sku_name.startswith(_AZURE_BURSTABLE_PREFIX)
 
 
-def parse_azure_family(arm_sku_name: str):
+# Azure SKU series -> AWS-style category, so `instance_family` means the same
+# thing on both sides. AWS's instanceFamily attribute is category-level
+# ('Compute optimized', 'Memory optimized', ...), not a series code, so
+# mapping straight from the Azure series letters ('D', 'NC') to that same
+# vocabulary is what makes the column comparable rather than just present.
+_AZURE_SERIES_TO_CATEGORY = {
+    "A": "General purpose",
+    "B": "General purpose",
+    "D": "General purpose",
+    "DC": "General purpose",
+    "DS": "General purpose",
+    "F": "Compute optimized",
+    "FX": "Compute optimized",
+    "E": "Memory optimized",
+    "EC": "Memory optimized",
+    "M": "Memory optimized",
+    "L": "Storage optimized",
+    "N": "GPU instance",
+    "NC": "GPU instance",
+    "ND": "GPU instance",
+    "NV": "GPU instance",
+    "NG": "GPU instance",
+    "H": "High performance compute",
+    "HB": "High performance compute",
+    "HC": "High performance compute",
+    "HX": "High performance compute",
+}
+
+# Azure's CpuArchitectureType values -> AWS's processorArchitecture values,
+# so `architecture` means the same thing after azure_specs.py is merged in.
+_AZURE_ARCH_TO_AWS = {
+    "x64": "x86_64",
+    "Arm64": "arm64",
+}
+
+
+def parse_azure_series(arm_sku_name: str):
     """
     'Standard_D4s_v5' -> 'D'. 'Standard_NC24ads_A100_v4' -> 'NC'.
-    Pulls the leading letter run after 'Standard_'/'Basic_', which is the
-    closest Azure equivalent to AWS's instance_family (e.g. 'm5', 'c6g').
+    Pulls the leading letter run after 'Standard_'/'Basic_' - Azure's raw SKU
+    series code. This is NOT the same kind of value as AWS's instance_family
+    attribute (see parse_azure_family below); it's closer to the family
+    prefix baked into an AWS instance_type ('c5', 'm5').
     """
     if not arm_sku_name:
         return None
@@ -76,14 +114,43 @@ def parse_azure_family(arm_sku_name: str):
     return match.group(1) if match else None
 
 
+def parse_azure_family(arm_sku_name: str):
+    """
+    Maps an Azure SKU series code to an AWS-style category
+    ('D' -> 'General purpose', 'NC' -> 'GPU instance', ...), so this lines up
+    with AWS's instanceFamily attribute, which is category-level rather than
+    a series code. Falls back to the raw series code for anything not in the
+    lookup table (e.g. newer/unmapped series) rather than returning None.
+    """
+    series = parse_azure_series(arm_sku_name)
+    if series is None:
+        return None
+    return _AZURE_SERIES_TO_CATEGORY.get(series, series)
+
+
 def parse_azure_os(product_name: str, sku_name: str = None):
     """
     Azure retail pricing doesn't have a dedicated OS field - it's implied by
-    absence/presence of 'Windows' in product_name/sku_name. No 'Windows' in
-    either usually means Linux (Azure's default, unlisted explicitly).
+    keywords in product_name/sku_name. Licensed distros (Windows, RHEL, SUSE)
+    get their own SKUs/meters, same as AWS; unlisted Linux (Ubuntu, CentOS,
+    etc.) carries no OS license line item, so it falls back to 'Linux'.
     """
-    text = " ".join(filter(None, [product_name, sku_name]))
-    return "Windows" if "windows" in text.lower() else "Linux"
+    text = " ".join(filter(None, [product_name, sku_name])).lower()
+    if "windows" in text:
+        return "Windows"
+    if "rhel" in text or "red hat" in text:
+        return "RHEL"
+    if "sles" in text or "suse" in text:
+        return "SUSE"
+    return "Linux"
+
+
+def normalize_architecture(value: str):
+    """Maps Azure's CpuArchitectureType values ('x64', 'Arm64') onto AWS's
+    processorArchitecture vocabulary ('x86_64', 'arm64')."""
+    if not value:
+        return value
+    return _AZURE_ARCH_TO_AWS.get(value, value)
 
 
 def memory_to_vcpu_ratio(vcpu, memory_gb):

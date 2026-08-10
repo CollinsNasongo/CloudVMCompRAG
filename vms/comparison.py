@@ -28,6 +28,7 @@ LEAN_COLUMNS = [
     "vcpu",
     "memory_gb",
     "memory_to_vcpu_ratio",
+    "local_storage_mb",
     "architecture",
     "is_burstable",
     "operating_system",
@@ -45,12 +46,16 @@ def normalize_aws(aws_df: pd.DataFrame) -> pd.DataFrame:
     df["is_burstable"] = df["instance_type"].apply(is_burstable_aws)
     # AWS's processor_architecture values: 'x86_64', 'arm64', 'i386'
     df["architecture"] = df["processor_architecture"]
+    df["hourly_price"] = df["price"]
+    # AWS only exposes local storage as a free-text description ('storage'),
+    # not a comparable number - leave unset rather than guess-parsing it.
+    df["local_storage_mb"] = None
     return df[LEAN_COLUMNS]
 
 
 def normalize_azure(azure_pricing_df: pd.DataFrame, azure_specs_df: pd.DataFrame) -> pd.DataFrame:
     df = azure_pricing_df.merge(
-        azure_specs_df[["instance_type", "region", "vcpu", "memory_gb", "architecture"]],
+        azure_specs_df[["instance_type", "region", "vcpu", "memory_gb", "architecture", "local_storage_mb"]],
         on=["instance_type", "region"],
         how="left",
         # pricing rows can have multiple meters (e.g. Windows/Linux, low-priority)
@@ -70,7 +75,7 @@ def normalize_azure(azure_pricing_df: pd.DataFrame, azure_specs_df: pd.DataFrame
         lambda r: memory_to_vcpu_ratio(r.get("vcpu"), r.get("memory_gb")), axis=1
     )
     df["is_burstable"] = df["instance_type"].apply(is_burstable_azure)
-    df["hourly_price"] = df["retail_price"]
+    df["hourly_price"] = df["price"]
     return df[LEAN_COLUMNS]
 
 

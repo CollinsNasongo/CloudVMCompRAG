@@ -19,7 +19,7 @@ from azure.identity import ClientSecretCredential
 from azure.mgmt.compute import ComputeManagementClient
 
 from vms import config
-from vms.utils import utc_timestamp
+from vms.utils import normalize_architecture, utc_timestamp
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +67,7 @@ def _extract_capabilities(sku) -> dict:
         field = _WANTED_CAPABILITIES.get(cap.name)
         if field:
             row[field] = cap.value
+    row["architecture"] = normalize_architecture(row["architecture"])
     return row
 
 
