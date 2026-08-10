@@ -13,6 +13,7 @@ import logging
 
 import pandas as pd
 
+from vms import config
 from vms.aws_pricing import fetch_aws_pricing
 from vms.azure_pricing import fetch_azure_pricing
 from vms.azure_specs import fetch_azure_specs
@@ -54,7 +55,12 @@ def normalize_aws(aws_df: pd.DataFrame) -> pd.DataFrame:
 
 
 def normalize_azure(azure_pricing_df: pd.DataFrame, azure_specs_df: pd.DataFrame) -> pd.DataFrame:
-    df = azure_pricing_df.merge(
+    # vcpu/memory_gb are placeholder None columns in the raw Azure pricing
+    # fetch (kept there for schema parity with AWS's raw CSV) - drop them
+    # before merging so the specs join below supplies the real values
+    # instead of colliding and silently becoming vcpu_x/vcpu_y.
+    pricing_df = azure_pricing_df.drop(columns=["vcpu", "memory_gb"], errors="ignore")
+    df = pricing_df.merge(
         azure_specs_df[["instance_type", "region", "vcpu", "memory_gb", "architecture", "local_storage_mb"]],
         on=["instance_type", "region"],
         how="left",
@@ -79,16 +85,34 @@ def normalize_azure(azure_pricing_df: pd.DataFrame, azure_specs_df: pd.DataFrame
     return df[LEAN_COLUMNS]
 
 
+def _load_or_fetch(filename: str, fetch_fn, **fetch_kwargs) -> pd.DataFrame:
+    """
+    Reuse `OUTPUT_DIR/filename` if it's already there instead of re-fetching
+    from the API every time; otherwise fetch fresh and save it before
+    returning, so the next call (or `python main.py --aws`/`--azure`/`--specs`)
+    picks up the same file instead of pulling again.
+    """
+    path = config.OUTPUT_DIR / filename
+    if path.exists():
+        logger.info("Using cached %s", path)
+        return pd.read_csv(path)
+
+    logger.info("%s not found, fetching fresh...", path)
+    df = fetch_fn(**fetch_kwargs)
+    df.to_csv(path, index=False)
+    logger.info("Saved %d rows -> %s", len(df), path)
+    return df
+
+
 def build_comparison(region_aws: str = None, region_azure: str = None) -> pd.DataFrame:
-    """Fetch everything fresh and return the combined, normalized comparison DataFrame."""
-    logger.info("Fetching AWS pricing...")
-    aws_df = fetch_aws_pricing(location=region_aws)
-
-    logger.info("Fetching Azure pricing...")
-    azure_pricing_df = fetch_azure_pricing(region=region_azure)
-
-    logger.info("Fetching Azure specs...")
-    azure_specs_df = fetch_azure_specs(region=region_azure)
+    """
+    Build the combined, normalized comparison DataFrame, reusing existing
+    aws_vm_pricing.csv/azure_vm_pricing.csv/azure_vm_specs.csv in OUTPUT_DIR
+    if present. Delete a file (or the whole OUTPUT_DIR) to force a re-fetch.
+    """
+    aws_df = _load_or_fetch("aws_vm_pricing.csv", fetch_aws_pricing, location=region_aws)
+    azure_pricing_df = _load_or_fetch("azure_vm_pricing.csv", fetch_azure_pricing, region=region_azure)
+    azure_specs_df = _load_or_fetch("azure_vm_specs.csv", fetch_azure_specs, region=region_azure)
 
     combined = pd.concat(
         [normalize_aws(aws_df), normalize_azure(azure_pricing_df, azure_specs_df)],
@@ -101,7 +125,6 @@ def build_comparison(region_aws: str = None, region_azure: str = None) -> pd.Dat
 
 if __name__ == "__main__":
     import logging as _logging
-    from vms import config
 
     _logging.basicConfig(level=_logging.INFO)
     df = build_comparison()

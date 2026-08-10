@@ -11,6 +11,7 @@ need specs joined in, that has to come from a second source keyed on
 """
 
 import logging
+import re
 
 import pandas as pd
 
@@ -51,6 +52,15 @@ def fetch_azure_pricing(region: str = None, currency: str = None) -> pd.DataFram
             arm_sku_name = item.get("armSkuName")
             product_name = item.get("productName")
             sku_name = item.get("skuName")
+
+            # Dedicated Host is priced per physical server, not per VM size -
+            # a different product than the per-instance rows this dataset is
+            # about (mirrors AWS's fetch, which only pulls productFamily
+            # 'Compute Instance' and skips its own Dedicated Host pricing).
+            # Azure spells this inconsistently ('Dedicated Host' vs
+            # 'DedicatedHost'), so match with the space made optional.
+            if product_name and re.search(r"dedicated\s*host", product_name, re.IGNORECASE):
+                continue
 
             products.append(
                 {

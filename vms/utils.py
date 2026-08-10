@@ -89,6 +89,10 @@ _AZURE_SERIES_TO_CATEGORY = {
     "HB": "High performance compute",
     "HC": "High performance compute",
     "HX": "High performance compute",
+    "G": "Memory optimized",  # legacy large-memory series, pre-dates D/E
+    "GS": "Memory optimized",
+    "NP": "FPGA Instances",  # Xilinx FPGA-accelerated, matches AWS's own category name
+    "NM": "Machine Learning ASIC Instances",  # Maia AI accelerator, matches AWS's Inferentia/Trainium category name
 }
 
 # Azure's CpuArchitectureType values -> AWS's processorArchitecture values,
